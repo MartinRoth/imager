@@ -1,0 +1,68 @@
+---
+title: "Fog Detection"
+author: "Martin Roth and Andrea Pagani"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Fog Detection}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.width  = 7,
+  fig.height = 4
+)
+```
+
+```{r}
+library(imager)
+library(data.table)
+library(ggplot2)
+library(visDec) # devtools::install_github("MartinRoth/visDec")
+library(changepoint)
+library(foreach)
+library(iterators)
+library(doParallel)
+registerDoParallel()
+
+### Read example pictures
+path <- system.file("extdata/Meetterrein", package="visDec")
+filenames <- list.files(path,
+                        pattern=glob2rx("Meetterrein_201510*.jpg"),
+                        full.names=TRUE)
+
+detect.edges <- function(im,sigma=1) {
+  # adapted from http://dahtah.github.io/imager/foreground_background.html
+  isoblur(im,sigma) %>% imgradient("xy") %>% llply(function(v) v^2) %>%
+    add %>% imsplit("c") %>% add 
+}
+
+
+### Computing basis image statistics
+
+imageSummary <- foreach(file = iter(filenames), .combine = rbind) %dopar% {
+  FileNameParser(file, "na*me_yyyymmdd_hhmm.jpg")
+}
+
+
+ReturnFeatures <- function(filePath) {
+  im <- subim(load.image(filePath), y > 16) 
+  imT <- RGBtoHSV(im)
+  list(meanEdge = detect.edges(im, 3) %>% sqrt %>% mean,
+       changePoint = cpts(cpt.mean(GetHorizAvgTrans(im), penalty = "None")))
+}
+
+featureNames <- c("meanEdge", "changePoint")
+
+
+imageSummary[, id := 1:.N]
+setkey(imageSummary, id)
+
+imageSummary <- foreach(id = iter(imageSummary[, id]), .packages = c('data.table'), .combine = rbind) %dopar% {
+  tmp <- imageSummary[id, ]
+  tmp[, eval(featureNames) := ReturnFeatures(filePath), by = dateTime]
+}
+imageSummary
+```
