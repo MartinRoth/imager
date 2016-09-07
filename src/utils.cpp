@@ -85,12 +85,16 @@ NumericVector imappend(List imlist,char axis)
 }
 
 //' Pixel-wise evaluation of a CImg expression
+//'
+//' This function provides experimental support for CImg's "math expression parser", a byte-compiled mini-language. 
+//' @param im an image
+//' @param expr an expression (as string)
 //' @examples
 //' imfill(10,10) %>% imeval('x+y') %>% plot
 //' # Box filter
 //' boxf = "v=0;for(iy=y-3,iy<y+3,iy++,for(ix=x-3,ix< x+3,ix++,v+=i(ix,iy)));v"
 //' imeval(boats,boxf) %>% plot
-//' # Example by D. Tschumperlé: Julia set
+//' # Example by D. Tschumperle: Julia set
 //' julia <-  "
 //'    zr = -1.2 + 2.4*x/w;
 //'    zi = -1.2 + 2.4*y/h;
@@ -103,27 +107,33 @@ NumericVector imappend(List imlist,char axis)
 //' imfill(500,500) %>% imeval(julia) %>% plot
 //' @export
 // [[Rcpp::export]]
-NumericVector imeval(NumericVector inp,std::string cmd)
+NumericVector imeval(NumericVector im,std::string expr)
 {
-    CImg<double> img = as<CImg<double> >(inp);
-    img.fill(cmd.c_str(),true);
+    CImg<double> img = as<CImg<double> >(im);
+    img.fill(expr.c_str(),true);
     return wrap(img);
 }
 
-//' Extract a numerical summary from image patches
-//' @export
+//' Extract a numerical summary from image patches, using CImg's mini-language
+//' Experimental feature. 
+//' @param im an image
+//' @param expr a CImg expression (as a string)
+//' @param cx vector of x coordinates for patch centers 
+//' @param cy vector of y coordinates for patch centers 
+//' @param wx vector of coordinates for patch width 
+//' @param wy vector of coordinates for patch height 
 //' @examples
-//' #Example: median filtering using patch_summary
+//' #Example: median filtering using patch_summary_cimg
 //' #Center a patch at each pixel
 //' im <- grayscale(boats)
 //' patches <- pixel.grid(im)  %>% mutate(w=3,h=3)
-//' #Extract patch summary:
-//' out <- mutate(patches,med=patch_summary(im,"ic",x,y,w,h))
+//' #Extract patch summary
+//' out <- mutate(patches,med=patch_summary_cimg(im,"ic",x,y,w,h))
 //' as.cimg(out,v.name="med") %>% plot
 //' @export
 // [[Rcpp::export]]
 
-NumericVector patch_summary(NumericVector im,std::string expr,IntegerVector cx,IntegerVector cy,IntegerVector wx,IntegerVector wy)
+NumericVector patch_summary_cimg(NumericVector im,std::string expr,IntegerVector cx,IntegerVector cy,IntegerVector wx,IntegerVector wy)
 {
   CId img = as<CId >(im);
   int n = cx.length();
@@ -136,32 +146,93 @@ NumericVector patch_summary(NumericVector im,std::string expr,IntegerVector cx,I
   return out;
 }
 
+// Extract a patch summary, fast version
+// Modified from original contribution by Martin Roth
+// [[Rcpp::export]]
+NumericVector extract_fast(NumericVector im,int fun,IntegerVector cx,IntegerVector cy,IntegerVector wx,IntegerVector wy)
+{
+  CId img = as<CId >(im);
+  int n = cx.length();
+  NumericVector out(n);
+  CId patch;
+  
+  for (int i = 0; i < n; i++)
+  {
+    patch = img.get_crop(cx(i)-wx(i)/2,cy(i)-wy(i)/2,cx(i)+wx(i)/2,cy(i)+wy(i)/2);
+    switch (fun)
+      {
+      case 0:
+	out[i] = patch.sum();
+	break;
+      case 1:
+	out[i] = patch.mean();
+	break;
+      case 2:
+	out[i] = patch.min();
+	break;
+      case 3:
+	out[i] = patch.max();
+	break;
+      case 4:
+	out[i] = patch.median();
+      	break;
+      case 5:
+	out[i] = patch.variance();
+	break;
+      case 6:
+	out[i] = sqrt(patch.variance());
+      }
+  }
+  return out;
+}
 
-
-//' Return image patches 
+//' Extract image patches and return a list
 //'
 //' Patches are rectangular (cubic) image regions centered at cx,cy (cz) with width wx and height wy (opt. depth wz)
-//'
+//' WARNINGS: 
+//' - values outside of the image region are considered to be 0.
+//' - widths and heights should be odd integers (they're rounded up otherwise). 
 //' @param im an image
 //' @param cx vector of x coordinates for patch centers 
 //' @param cy vector of y coordinates for patch centers 
-//' @param wx vector of coordinates for patch width 
-//' @param wy vector of coordinates for patch height 
+//' @param wx vector of patch widths (or single value)
+//' @param wy vector of patch heights (or single value)
 //' @return a list of image patches (cimg objects)
 //' @export
 //' @examples
 //' #2 patches of size 5x5 located at (10,10) and (10,20)
-//' extract_patches(boats,c(10,10),c(10,20),rep(5,2),rep(5,2)) 
+//' extract_patches(boats,c(10,10),c(10,20),5,5)
 // [[Rcpp::export]]
 List extract_patches(NumericVector im,IntegerVector cx,IntegerVector cy,IntegerVector wx,IntegerVector wy)
 {
   CId img = as<CId >(im);
   int n = cx.length();
   List out(n);
-
+  bool rep = false;
+  if (cx.length() != cy.length())
+    {
+      stop("cx and cy must have equal length");
+    }
+  if (wx.length() != wy.length())
+    {
+      stop("wx and wy must have equal length");
+    }
+  if (wx.length() == 1)
+    {
+      rep = true;
+    }
+  cx = cx - 1;
+  cy = cy - 1;
   for (int i = 0; i < n; i++)
     {
-      out[i] = wrap(img.get_crop(cx(i)-wx(i)/2,cy(i)-wy(i)/2,cx(i)+wx(i)/2,cy(i)+wy(i)/2));
+      if (rep)
+	{
+	  out[i] = wrap(img.get_crop(cx(i)-wx(0)/2,cy(i)-wy(0)/2,cx(i)+wx(0)/2,cy(i)+wy(0)/2)); 
+	}
+      else
+	{
+	  out[i] = wrap(img.get_crop(cx(i)-wx(i)/2,cy(i)-wy(i)/2,cx(i)+wx(i)/2,cy(i)+wy(i)/2)); 
+	}
     }
   return out;
 }
@@ -199,11 +270,29 @@ List extract_patches3D(NumericVector im,IntegerVector cx,IntegerVector cy,Intege
   CId img = as<CId >(im);
   int n = cx.length();
   List out(n);
-
-
+  bool rep = false;
+  if ((cx.length() != cy.length()) or (cx.length() != cz.length()) or (cy.length() != cz.length()))
+    {
+      stop("cx, cy and cz must have equal length");
+    }
+  if ((wx.length() != wy.length()) or (wx.length() != wz.length()) or (wy.length() != wz.length()))
+    {
+      stop("wx, wy and wz must have equal length");
+    }
+  if (wx.length() == 1)
+    {
+      rep = true;
+    }
   for (int i = 0; i < n; i++)
     {
-      out[i] = img.get_crop(cx(i)-wx(i)/2,cy(i)-wy(i)/2,cz(i)-wz(i)/2,cx(i)+wx(i)/2,cy(i)+wy(i)/2,cz(i)+wz(i)/2);
+      if (rep)
+	{
+	  out[i] = img.get_crop(cx(i)-wx(0)/2,cy(i)-wy(0)/2,cz(i)-wz(0)/2,cx(i)+wx(0)/2,cy(i)+wy(0)/2,cz(i)+wz(0)/2);
+	}
+      else
+	{
+	  out[i] = img.get_crop(cx(i)-wx(i)/2,cy(i)-wy(i)/2,cz(i)-wz(i)/2,cx(i)+wx(i)/2,cy(i)+wy(i)/2,cz(i)+wz(i)/2);
+	}
     }
   return out;
 }
@@ -254,3 +343,45 @@ List do_patchmatch(NumericVector im1,NumericVector im2,
 
 
 
+// Check that coordinates are all in image (indexing from 1)
+// [[Rcpp::export]]
+LogicalVector checkcoords(IntegerVector x,IntegerVector y,IntegerVector z,IntegerVector c,IntegerVector d)
+{
+  int n = x.length();
+  LogicalVector out(n);
+  for (int i = 0; i < n; i++)
+    {
+      if ((x[i] < 1) or (x[i] > d[0]) or (y[i] < 1) or (y[i] > d[1]) or (z[i] < 1) or (z[i] > d[2]) or (c[i] < 1) or (c[i] > d[3]))
+	{
+	  out[i] = false;
+	}
+      else
+	{
+	  out[i] = true;
+	}
+    }
+  return out;
+}
+
+
+// [[Rcpp::export]]
+int cimg_omp()
+{
+  return cimg::openmp_mode();
+}
+
+// [[Rcpp::export]]
+int set_cimg_omp(int mode)
+{
+  return cimg::openmp_mode(mode);
+}
+
+// [[Rcpp::export]]
+bool has_omp()
+{
+#ifdef cimg_use_openmp
+  return true;
+#else
+  return false;
+#endif
+}

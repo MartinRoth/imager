@@ -38,3 +38,5 @@ inst/doc
 *_cache
 *_files
 .Rproj.user
+aclocal.m4
+autom4te.cache

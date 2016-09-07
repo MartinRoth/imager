@@ -4,17 +4,22 @@
 \alias{imeval}
 \title{Pixel-wise evaluation of a CImg expression}
 \usage{
-imeval(inp, cmd)
+imeval(im, expr)
+}
+\arguments{
+\item{im}{an image}
+
+\item{expr}{an expression (as string)}
 }
 \description{
-Pixel-wise evaluation of a CImg expression
+This function provides experimental support for CImg's "math expression parser", a byte-compiled mini-language.
 }
 \examples{
 imfill(10,10) \%>\% imeval('x+y') \%>\% plot
 # Box filter
 boxf = "v=0;for(iy=y-3,iy<y+3,iy++,for(ix=x-3,ix< x+3,ix++,v+=i(ix,iy)));v"
 imeval(boats,boxf) \%>\% plot
-# Example by D. Tschumperlé: Julia set
+# Example by D. Tschumperle: Julia set
 julia <-  "
    zr = -1.2 + 2.4*x/w;
    zi = -1.2 + 2.4*y/h;
